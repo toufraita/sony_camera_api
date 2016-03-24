@@ -1,10 +1,8 @@
-# Echo client program
-import socket
-import sys
-import xml
-import time
-import re
+import json
+import urllib
 import urllib2
+import time
+import socket
 
 SSDP_ADDR = "239.255.255.250"  # The remote host
 SSDP_PORT = 1900    # The same port as used by the server
@@ -13,23 +11,16 @@ SSDP_ST = "urn:schemas-sony-com:service:ScalarWebAPI:1"
 SSDP_TIMEOUT = 10000  #msec
 PACKET_BUFFER_SIZE = 1024
 
-# Find all available cameras using uPNP
-# Improved with code from 'https://github.com/storborg/sonypy' under MIT license.
-
 class ControlPoint(object):
     def __init__(self):
         self.__bind_sockets()
 
     def __bind_sockets(self):
         self.__udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.__udp_socket.settimeout(0.1)
+        self.__udp_socket.settimeout(1)
         return
 
-    def discover(self, duration=None):
-        # Default timeout of 1s
-        if duration==None:
-            duration=1
-
+    def discover(self, duration):
         # Set the socket to broadcast mode.
         self.__udp_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL , 2)
 
@@ -44,93 +35,20 @@ class ControlPoint(object):
 
         # Send the message.
         self.__udp_socket.sendto(msg, (SSDP_ADDR, SSDP_PORT))
-
         # Get the responses.
         packets = self._listen_for_discover(duration)
-        endpoints = []
-        for host,addr,data in packets:
-            resp = self._parse_ssdp_response(data)
-            try:
-                endpoint = self._read_device_definition(resp['location'])
-                endpoints.append(endpoint)
-            except:
-                pass
-        return endpoints
+        return packets
 
     def _listen_for_discover(self, duration):
         start = time.time()
         packets = []
         while (time.time() < (start + duration)):
             try:
-                data, (host, port) = self.__udp_socket.recvfrom(1024)
-
-                # Assemble any packets from multiple cameras
-                found = False
-                for x in xrange(len(packets)):
-                    ohost, oport, odata = packets[x]
-                    if host == ohost and port == oport:
-                        packets.append((host, port, odata+data))
-                        packets.pop(x)
-                        found = True
-
-                if not found:
-                    packets.append((host, port, data))
+                data, addr = self.__udp_socket.recvfrom(1024)
+                packets.append((data, addr))
             except:
                 pass
         return packets
-
-    def _parse_ssdp_response(self, data):
-        lines = data.split('\r\n')
-        assert lines[0] == 'HTTP/1.1 200 OK'
-        headers = {}
-        for line in lines[1:]:
-            if line:
-                try:
-                    key, val = line.split(': ', 1)
-                    headers[key.lower()] = val
-                except:
-                    pass
-        return headers
-
-    def _parse_device_definition(self, doc):
-        """
-        Parse the XML device definition file.
-        """
-        dd_regex = ('<av:X_ScalarWebAPI_Service>'
-            '\s*'
-            '<av:X_ScalarWebAPI_ServiceType>'
-            '(.+?)'
-            '</av:X_ScalarWebAPI_ServiceType>'
-            '\s*'
-            '<av:X_ScalarWebAPI_ActionList_URL>'
-            '(.+?)'
-            '/sony'                               # and also strip '/sony'
-            '</av:X_ScalarWebAPI_ActionList_URL>'
-            '\s*'
-            '<av:X_ScalarWebAPI_AccessType\s*/>'  # Note: QX10 has 'Type />', HX60 has 'Type/>'
-            '\s*'
-            '</av:X_ScalarWebAPI_Service>')
-
-        services = {}
-        for m in re.findall(dd_regex, doc):
-            service_name = m[0]
-            endpoint = m[1]
-            services[service_name] = endpoint
-        return services
-
-    def _read_device_definition(self, url):
-        """
-        Fetch and parse the device definition, and extract the URL endpoint for
-        the camera API service.
-        """
-        r = urllib2.urlopen(url)
-        services = self._parse_device_definition(r.read())
-
-        return services['camera']
-
-import collections
-import urllib2
-import json
 
 # Common Header
 # 0--------1--------2--------+--------4----+----+----+----8
@@ -168,7 +86,8 @@ def common_header(bytes):
     time_stemp = int(binascii.hexlify(bytes[4:8]), 16)
     if start_byte != 255: # 0xff fixed
         return '[error] wrong QX livestream start byte'
-
+    if payload_type != 1: # 0x01 - liveview images
+        return '[error] wrong QX livestream payload type'
     common_header = {'start_byte': start_byte,
                     'payload_type': payload_type,
                     'sequence_number': sequence_number,
@@ -176,74 +95,42 @@ def common_header(bytes):
                     }
     return common_header
 
-def payload_header(bytes, payload_type=None):
-    if payload_type==None:
-        payload_type=1	# Assume JPEG
-
+def payload_header(bytes):
     start_code = int(binascii.hexlify(bytes[0:4]), 16)
     jpeg_data_size = int(binascii.hexlify(bytes[4:7]), 16)
     padding_size = int(binascii.hexlify(bytes[7]), 16)
-
+    reserved_1 = int(binascii.hexlify(bytes[8:12]), 16)
+    flag = int(binascii.hexlify(bytes[12]), 16) # 0x00, fixed
+    reserved_2 = int(binascii.hexlify(bytes[13:]), 16)
+    if flag != 0:
+        return '[error] wrong QX payload header flag'
     if start_code != 607479929:
         return '[error] wrong QX payload header start'
 
     payload_header = {'start_code': start_code,
                       'jpeg_data_size': jpeg_data_size,
                       'padding_size': padding_size,
-                    }
-
-    if payload_type == 1:
-        payload_header.update(payload_header_jpeg(bytes))
-    elif payload_type == 2:
-        payload_header.update(payload_header_frameinfo(bytes))
-    else:
-        return '[error] unknown payload type'
-
-    return payload_header
-
-def payload_header_jpeg(bytes):
-    reserved_1 = int(binascii.hexlify(bytes[8:12]), 16)
-    flag = int(binascii.hexlify(bytes[12]), 16) # 0x00, fixed
-    reserved_2 = int(binascii.hexlify(bytes[13:]), 16)
-    if flag != 0:
-        return '[error] wrong QX payload header flag'
-
-    payload_header = {'reserved_1': reserved_1,
+                      'reserved_1': reserved_1,
                       'flag': flag,
-                      'reserved_2':reserved_2,
+                      'resreved_2':reserved_2,
                     }
     return payload_header
 
-def payload_header_frameinfo(bytes):
-    version = int(binascii.hexlify(bytes[8:10]), 16)
-    frame_count = int(binascii.hexlify(bytes[10:12]), 16)
-    frame_size = int(binascii.hexlify(bytes[12:14]), 16)
-    reserved_2 = int(binascii.hexlify(bytes[14:]), 16)
-
-    payload_header = {'version': version,
-                      'frame_count': frame_count,
-                      'frame_size': frame_size,
-                      'reserved_2':reserved_2,
-                    }
-    return payload_header
 
 class SonyAPI():
+    def __init__(self, QX_ADDR='http://192.168.122.1:8080', scheme='storage', source='storage:memoryCard1'):
+        """Creation of link to camera. Default parameters are written for Sony ActionCas
 
-    def __init__(self, QX_ADDR=None, params=None):
-        if not QX_ADDR:
-            self.QX_ADDR = 'http://10.0.0.1:10000'
-        else:
-            self.QX_ADDR = QX_ADDR
-        if not params:
-            self.params = {
-            "method": "",
-            "params": [],
-            "id": 1,  # move to setting
-            "version": "1.0"}  # move to setting
-        else:
-            self.params = params
+        :param QX_ADDR: String.
+        :param scheme: String
+        :param source: String
+        :return:
+        """
+        self.QX_ADDR = QX_ADDR
+        self.scheme = scheme
+        self.source = source
 
-    def _truefalse(self, param):
+    def _toList(self, param):
         params = []
         if type(param) != list:
             param = [param]
@@ -259,37 +146,338 @@ class SonyAPI():
                     params.append(x)
         return params
 
-    def _cmd(self, method=None, param=[], target=None):
+    def _cmd(self, method=None, params=None, version='1.0', numid=1, target="camera"):
+        """Method used to use API with the camera, using urllib2 and json. The "getAVailableApiList" seems not to
+        list avContent APIs
+
+        :param method:String. API name
+        :param params:String List. Paramters for this API
+        :param version:String. Version of the API. '1.0' by default.
+        :param numid:Int. API id.
+        :param target:String.Last part of endpoint url. "camera" by default, but can also be "avContent" or "system"
+        depending on the API
+        :return:Dict. Result of the API.
+        """
         true = True
         false = False
         null = None
 
-        if not method in ["getAvailableApiList", "liveview"]:
+        if not method in ["getAvailableApiList"] and target not in ["avContent"]:
             camera_api_list = self.getAvailableApiList()["result"][0]
             if method not in camera_api_list:
-                return "[ERROR] this api is not support in this camera"
+                return "[ERROR] this api is not available"
 
-        if method:
-            self.params["method"] = method
-        if param:
-            self.params["params"] = self._truefalse(param)
+        if params:
+            params = self._toList(params)
         else:
-            self.params["params"] = []
+            params = []
+
+        datain = {'method': method, 'params': params, 'id': numid, 'version': version}
+
+        # print datain
 
         try:
-            if target:
-                result = eval(urllib2.urlopen(self.QX_ADDR + "/sony/" + target, json.dumps(self.params)).read())
-            else:
-                result = eval(urllib2.urlopen(self.QX_ADDR + "/sony/camera", json.dumps(self.params)).read())
+            result = eval(urllib2.urlopen(self.QX_ADDR + "/sony/" + target, json.dumps(datain)).read())
         except Exception as e:
-            result = "[ERROR] camera doesn't work" + str(e)
+            result = "[ERROR] camera doesn't work : " + str(e)
+
+        time.sleep(1)
         return result
 
-    def liveview(self, param=None):
-        if not param:
+
+    # <editor-fold desc="Listing Data">
+    def getDates(self):
+        #Gets Folders dates without changing current Camera Function.
+
+        #Change mode to Contents Transfer if needed
+        reChange=False
+        camFunction=self.getCameraFunction()['result'][0]
+        if not camFunction=='Contents Transfer':
+            reChange=True
+            self.setCameraFunction(params='Contents Transfer')
+
+        #Recover dates
+        paramsList = {'uri': self.source,
+                      'stIdx': 0,
+                      'cnt': 100,
+                      'type': None,
+                      'view': 'date',
+                      'sort': 'ascending'}
+        contList = self.getContentList(paramsList)['result'][0]
+        dateList = [elt['title'] for elt in contList]
+        #dateUriList = [elt['uri'] for elt in contList]
+
+        #Change to previous Camera Function
+        if reChange:
+            self.setCameraFunction(camFunction)
+
+        return dateList
+
+    def getFilesCount(self,date=None,type=None):
+        #Initialize variables
+        recType=None
+        view='flat'
+
+        #Change mode to Contents Transfer if needed
+        camFunction=self.getCameraFunction()['result'][0]
+        if not camFunction=='Contents Transfer':
+            reChange=True
+            self.setCameraFunction(params='Contents Transfer')
+
+
+        uri=self.source
+
+        #Type needs to be a list
+        if type and isinstance(type,str):
+            type=[type]
+
+        #If date is specified, it is appended to the default uri (ie scheme + storage source), and view is switched
+        # to date
+        if date:
+            date=date[0:4]+'-'+date[4:6]+'-'+date[6:8]
+            uri=uri + '?path=' + date
+            view='date'
+
+        ##Type specification is possible only in date view. Thus if type is specified without a date, all the files
+        # should be first listed, and then processed with python to count only the files with specified type. Specified type
+        # is recorded in recType
+        if not date and type:
+            recType=type
+            type=None
+
+        if not recType:
+            paramsList = {'uri':uri,
+                          'type':type,
+                          'view':view}
+            res=self.getContentCount(paramsList)['result'][0]['count']
+
+        else:
+            paramsList = {'uri':uri,
+                      'stIdx':0,
+                      'cnt':100,
+                      'type':type,
+                      'view':view,
+                      'sort':'ascending'}
+            res=self.getContentList(paramsList)['result'][0]
+            res=[elt['contentKind'] for elt in res]
+            if len(res)>=100:
+                return "Error:Type chosen with no date, more than 100 files listed "
+                #Possible upgrade : list files until len(res)<100. Really useful?
+            else:
+                c=0
+                for elt in res:
+                    if elt in recType:
+                        c += 1
+                res=c
+
+        return res
+
+    def getFilesList(self,date=None,type=None,stIdx=0,cnt=100,sort='ascending'):
+
+        #Initialize variables
+        recType=None
+        view='flat'
+
+        #Change mode to Contents Transfer if needed
+        reChange=False
+        camFunction=self.getCameraFunction()['result'][0]
+        if not camFunction=='Contents Transfer':
+            reChange=True
+            self.setCameraFunction(params='Contents Transfer')
+
+
+        uri=self.source
+
+        #Type needs to be a list
+        if type and isinstance(type,str):
+            type=[type]
+
+        #If date is specified, it is appended to the default uri (ie scheme + storage source), and view is switched
+        # to date
+        if date:
+            date=date[0:4]+'-'+date[4:6]+'-'+date[6:8]
+            uri=uri + '?path=' + date
+            view='date'
+
+        ##Type specification is possible only in date view. Thus if type is specified without a date, all the files
+        # should be first listed, and then processed with python to keep only the type specified. Specified type
+        # is recorded in recType
+        if not date and type:
+            recType=type
+            type=None
+
+        paramsList = {'uri':uri,
+                      'stIdx':stIdx,
+                      'cnt':cnt,
+                      'type':type,
+                      'view':view,
+                      'sort':sort}
+        #print(paramsList)
+
+        res=self.getContentList(paramsList)
+
+        try:
+            #print self.getContentList(paramsList)
+            res=res['result'][0]
+
+            #if recType has been specified, keep only files matching type initially given
+            if recType:
+                res=[elt for elt in res if elt['contentKind'] in recType]
+
+        except KeyError :
+            print "Error : Cannot obtain content list. Supposedly there's no file matching specified type. Returns empty" \
+                  " list "
+            res=[]
+
+        finally:
+            return res
+
+    def getFilesInRange(self,date,timeBegin,timeEnd,folder,type=None):
+        """List the files recorded during a specified range of time during a specified day.
+
+        date -- string, Date of the recording : YearMonthDay (ex '20160513')
+        timeBegin -- string, time of initial created time : Hour:Min:Sec (ex '10:34:23')
+        timeEnd -- string, time of last created time : Hour:Min:Sec (ex '10:36:27')
+        folder -- string, folder where images will be recorded (ex '/home/Toto/folder')
+        type -- String List, types of elements to be recorded among 'still', 'movie_mp4', 'movie_xavcs'
+            (ex  ['still','movie_mp4'])
+        """
+
+        #Defaul setting for files type
+        #if not type:
+        #    type=['still']
+
+        #Variables
+        filesList=[]
+        FirstCreatedTime=date[0:4]+'-'+date[4:6]+'-'+date[6:8]+'T'+timeBegin
+        LastCreatedTime=date[0:4]+'-'+date[4:6]+'-'+date[6:8]+'T'+timeEnd
+        firstFileFound=False
+        lastFileFound=False
+        numFiles=self.getFilesCount(date,type)
+        indSearch=0
+        indFirstFile=numFiles-1 #By default (if all files begin gefore timeBegin) pick the last file
+        indLastFile=numFiles-1
+
+        while not firstFileFound and indSearch<numFiles :
+            files=self.getFilesList(date,type,stIdx=indSearch)
+            times=[elt['createdTime'] for elt in files]
+            for i,time in enumerate(times):
+                #If created time is after timeBegin, take file just before
+                if time[0:19]>=FirstCreatedTime:
+                    if indSearch == 0 and i==0:
+                        indFirstFile=0
+                        print("On " + date + ", first file was created after timeBegin")
+                    else:
+                        indFirstFile=indSearch+i-1
+                    firstFileFound=True
+                    break
+            indSearch += 100
+
+        #If all files begin before timeBegin, the last one only is picked (cf indFirstFile=numFiles-1)
+        #indSearch is set indFirstFile to begin listing the data
+        indSearch=indFirstFile
+
+        while not lastFileFound and indSearch<numFiles:
+            files=self.getFilesList(date,type,stIdx=indSearch)
+            times=[elt['createdTime'] for elt in files]
+            for i,time in enumerate(times):
+                if time[0,19]>LastCreatedTime:
+                    indLastFile=indSearch+i-1
+                    lastFileFound=True
+                    break
+                else:
+                    filesList.append(files[i])
+            indSearch += 100
+
+        filesListLength=indLastFile-indFirstFile+1
+
+        return filesList,filesListLength
+
+    def getFilesOriginalUrl(self,date=None,stIdx=0,cnt=100,type=None,sort='ascending'):
+        contList=self.getFilesList(date,stIdx,cnt,type,sort)
+        #print contList
+        Urls=[elt['content']['original'][0]['url'] for elt in contList]
+        return Urls
+
+    def getJpgList(self,date=None,stIdx=0,cnt=100,sort='ascending'):
+        return self.getFilesList(date=date,stIdx=stIdx,cnt=cnt,type=['still'],sort=sort)
+    # </editor-fold>
+
+    # <editor-fold desc="Download Data">
+
+    def saveFile(self,url,folder,name=None):
+        url=url.translate(None,'\\')
+
+        #If no name given, the file is named after the url address
+        if not name:
+            name=url.split('/org/')[1]
+
+        path=folder+'/'+name
+        u=urllib2.urlopen(url)
+        f = open(path, 'wb')
+        buffer = u.read()
+        f.write(buffer)
+        f.close()
+
+    #
+    def saveRange(self,date,timeBegin,timeEnd,folder,type=None):
+        """Downloads the files recorded during a specified range of time during a specified day. Files will have format
+            YearMonthDay_HourMinSec_N, where N differentiates files with similar created time (ex 20160324_143652_2)
+
+        date -- string, Date of the recording : YearMonthDay (ex '20160513')
+        timeBegin -- string, time of initial created time : Hour:Min:Sec (ex '10:34:23')
+        timeEnd -- string, time of last created time : Hour:Min:Sec (ex '10:36:27')
+        folder -- string, folder where images will be recorded (ex '/home/Toto/folder')
+        type -- String List, types of elements to be recorded among 'still', 'movie_mp4', 'movie_xavcs'
+            (ex  ['still','movie_mp4'])
+        """
+
+        #Defaul setting for files type
+        if not type:
+            type=['still']
+
+        #Variables
+        files=None
+        FirstCreatedTime=date[0:4]+'-'+date[4:6]+'-'+date[6:8]+'T'+timeBegin
+        LastCreatedTime=date[0:4]+'-'+date[4:6]+'-'+date[6:8]+'T'+timeEnd
+        firstFileFound=False
+        lastFileFound=False
+        numFiles=self.getFilesCount(date,type)
+        indSearch=0
+        indFirstFile=numFiles-1 #By default, pick the last file
+        indLastFile=0
+
+        while not firstFileFound and indSearch<numFiles :
+            files=self.getFilesList(date,type,stIdx=indSearch)
+            times=[elt['createdTime'] for elt in files]
+            for i,time in enumerate(times):
+                #If created time is after timeBegin, take file just before
+                if time[0:19]>=FirstCreatedTime:
+                    if indSearch == 0 and i==0:
+                        indFirstFile=0
+                        print("On " + date + ", first file was created after timeBegin")
+                    else:
+                        indFirstFile=indSearch+i-1
+                    firstFileFound=True
+                    break
+            indSearch += 100
+
+        #If all files begin before timeBegin, the last one is picked (cf indFirstFile=numFiles-1) and indSearch is set
+        #to the end of the files list
+        indSearch=min(indSearch,numFiles-1)
+
+        while not lastFileFound and indSearch<numFiles:
+            "test"
+
+        return
+    # </editor-fold>
+
+    # <editor-fold desc="Liveview">
+    def liveview(self, params=None):
+        if not params:
             liveview = self._cmd(method="startLiveview")
         else:
-            liveview = self._cmd(method="startLiveviewWithSize", param=param)
+            liveview = self._cmd(method="startLiveviewWithSize", params=params)
         if isinstance(liveview, dict):
             try:
                 url = liveview['result'][0].replace('\\','')
@@ -301,21 +489,8 @@ class SonyAPI():
             result = liveview
         return result
 
-    def setShootMode(self, param=None):
-        if not param:
-            print """[ERROR] please enter the param like below
-            "still"            Still image shoot mode
-            "movie"            Movie shoot mode
-            "audio"            Audio shoot mode
-            "intervalstill"    Interval still shoot mode
-            e.g) In[26]:  camera.setShootMode(param=['still'])
-                 Out[26]: {'id': 1, 'result': [0]}
-            """
-        return self._cmd(method="setShootMode", param=param)
-
-
-    def startLiveviewWithSize(self, param=None):
-        if not param:
+    def startLiveviewWithSize(self, params=None):
+        if not params:
             print """[ERROR] please enter the param like below
         "L"     XGA size scale (the size varies depending on the camera models,
                 and some camera models change the liveview quality instead of
@@ -323,20 +498,37 @@ class SonyAPI():
         "M"     VGA size scale (the size varies depending on the camera models)
         """
 
-        return self._cmd(method="startLiveviewWithSize", param=param)
+        return self._cmd(method="startLiveviewWithSize", params=params)
 
-    def setLiveviewFrameInfo(self, param=None):
-        if not param:
+    def setLiveviewFrameInfo(self, params=None):
+        if not params:
             print """
         "frameInfo"
                 true - Transfer the liveview frame information
                 false - Not transfer
-        e.g) SonyAPI.setLiveviewFrameInfo(param=[{"frameInfo": True}])
+        e.g) SonyAPI.setLiveviewFrameInfo(params=[{"frameInfo": True}])
         """
-        return self._cmd(method="setLiveviewFrameInfo", param=param)
+        return self._cmd(method="setLiveviewFrameInfo", params=params)
 
-    def actZoom(self, param=None):
-        if not param:
+    def setLiveviewSize(self, params=None):
+        return self._cmd(method="setLiveviewSize", params=params)
+
+    # </editor-fold>
+
+    def setShootMode(self, params=None):
+        if not params:
+            print ("[ERROR] please enter the param like below\n"
+                   "			\"still\"            Still image shoot mode\n"
+                   "			\"movie\"            Movie shoot mode\n"
+                   "			\"audio\"            Audio shoot mode\n"
+                   "			\"intervalstill\"    Interval still shoot mode\n"
+                   "			e.g) In[26]:  camera.setShootMode(params=['still'])\n"
+                   "				 Out[26]: {'id': 1, 'result': [0]}\n"
+                   "			")
+        return self._cmd(method="setShootMode", params=params)
+
+    def actZoom(self, params=None):
+        if not params:
             print """ ["direction", "movement"]
             direction
                 "in"        Zoom-In
@@ -345,127 +537,124 @@ class SonyAPI():
                 "start"     Long push
                 "stop"      Stop
                 "1shot"     Short push
-            e.g) SonyAPI.actZoom(param=["in", "start"])
+            e.g) SonyAPI.actZoom(params=["in", "start"])
             """
-        return self._cmd(method="actZoom", param=param)
+        return self._cmd(method="actZoom", params=params)
 
-    def setZoomSetting(self, param=None):
-        if not param:
+    def setZoomSetting(self, params=None):
+        if not params:
             print """
             "zoom"
                 "Optical Zoom Only"                Optical zoom only.
                 "On:Clear Image Zoom"              On:Clear Image Zoom.
-            e.g) SonyAPI.setZoomSetting(param=[{"zoom": "Optical Zoom Only"}])
+            e.g) SonyAPI.setZoomSetting(params=[{"zoom": "Optical Zoom Only"}])
             """
-        return self._cmd(method="setZoomSetting", param=param)
+        return self._cmd(method="setZoomSetting", params=params)
 
-    def setLiveviewSize(self, param=None):
-        return self._cmd(method="setLiveviewSize", param=param)
-
-    def setTouchAFPosition(self, param=None):
-        if not param:
+    def setTouchAFPosition(self, params=None):
+        if not params:
             print """ [ X-axis position, Y-axis position]
                 X-axis position     Double
                 Y-axis position     Double
-            e.g) SonyAPI.setTouchAFPosition(param=[ 23.2, 45.2 ])
+            e.g) SonyAPI.setTouchAFPosition(params=[ 23.2, 45.2 ])
             """
-        return self._cmd(method="setTouchAFPosition", param=param)
+        return self._cmd(method="setTouchAFPosition", params=params)
 
-    def actTrackingFocus(self, param=None):
-        if not param:
+    def actTrackingFocus(self, params=None):
+        if not params:
             print """
                 "xPosition"     double                X-axis position
                 "yPosition"     double                Y-axis position
-            e.g) SonyAPI.actTrackingFocus(param={"xPosition":23.2, "yPosition": 45.2})
+            e.g) SonyAPI.actTrackingFocus(params={"xPosition":23.2, "yPosition": 45.2})
             """
-        return self._cmd(method="actTrackingFocus", param=param)
+        return self._cmd(method="actTrackingFocus", params=params)
 
-    def setTrackingFocus(self, param=None):
-        return self._cmd(method="setTrackingFocus", param=param)
+    def setTrackingFocus(self, params=None):
+        return self._cmd(method="setTrackingFocus", params=params)
 
-    def setContShootingMode(self, param=None):
-        return self._cmd(method="setContShootingMode", param=param)
+    def setContShootingMode(self, params=None):
+        return self._cmd(method="setContShootingMode", params=params)
 
-    def setContShootingSpeed(self, param=None):
-        return self._cmd(method="setContShootingSpeed", param=param)
+    def setContShootingSpeed(self, params=None):
+        return self._cmd(method="setContShootingSpeed", params=params)
 
-    def setSelfTimer(self, param=None):
-        return self._cmd(method="setSelfTimer", param=param)
+    def setSelfTimer(self, params=None):
+        return self._cmd(method="setSelfTimer", params=params)
 
-    def setExposureMode(self, param=None):
-        return self._cmd(method="setExposureMode", param=param)
+    def setExposureMode(self, params=None):
+        return self._cmd(method="setExposureMode", params=params)
 
-    def setFocusMode(self, param=None):
-        return self._cmd(method="setFocusMode", param=param)
+    def setFocusMode(self, params=None):
+        return self._cmd(method="setFocusMode", params=params)
 
-    def setExposureCompensation(self, param=None):
-        return self._cmd(method="setExposureCompensation", param=param)
+    def setExposureCompensation(self, params=None):
+        return self._cmd(method="setExposureCompensation", params=params)
 
-    def setFNumber(self, param=None):
-        return self._cmd(method="setFNumber", param=param)
+    def setFNumber(self, params=None):
+        return self._cmd(method="setFNumber", params=params)
 
-    def setShutterSpeed(self, param=None):
-        return self._cmd(method="setShutterSpeed", param=param)
+    def setShutterSpeed(self, params=None):
+        return self._cmd(method="setShutterSpeed", params=params)
 
-    def setIsoSpeedRate(self, param=None):
-        return self._cmd(method="setIsoSpeedRate", param=param)
+    def setIsoSpeedRate(self, params=None):
+        return self._cmd(method="setIsoSpeedRate", params=params)
 
-    def setWhiteBalance(self, param=None):
-        return self._cmd(method="setWhiteBalance", param=param)
+    def setWhiteBalance(self, params=None):
+        return self._cmd(method="setWhiteBalance", params=params)
 
-    def setProgramShift(self, param=None):
-        return self._cmd(method="setProgramShift", param=param)
+    def setProgramShift(self, params=None):
+        return self._cmd(method="setProgramShift", params=params)
 
-    def setFlashMode(self, param=None):
-        return self._cmd(method="setFlashMode", param=param)
+    def setFlashMode(self, params=None):
+        return self._cmd(method="setFlashMode", params=params)
 
-    def setAutoPowerOff(self, param=None):
-        return self._cmd(method="setAutoPowerOff", param=param)
+    def setAutoPowerOff(self, params=None):
+        return self._cmd(method="setAutoPowerOff", params=params)
 
-    def setBeepMode(self, param=None):
-        return self._cmd(method="setBeepMode", param=param)
+    def setBeepMode(self, params=None):
+        return self._cmd(method="setBeepMode", params=params)
 
-    def setCurrentTime(self, param=None):
-        return self._cmd(method="setCurrentTime", param=param, target="system")
+    def setCurrentTime(self, params=None):
+        return self._cmd(method="setCurrentTime", params=params, target="system")
 
-    def setStillSize(self, param=None):
-        return self._cmd(method="setStillSize", param=param)
+    def setStillSize(self, params=None):
+        return self._cmd(method="setStillSize", params=params)
 
-    def setStillQuality(self, param=None):
-        return self._cmd(method="setStillQuality", param=param)
+    def setStillQuality(self, params=None):
+        return self._cmd(method="setStillQuality", params=params)
 
-    def setPostviewImageSize(self, param=None):
-        return self._cmd(method="setPostviewImageSize", param=param)
+    def setPostviewImageSize(self, params=None):
+        return self._cmd(method="setPostviewImageSize", params=params)
 
-    def setMovieFileFormat(self, param=None):
-        return self._cmd(method="setMovieFileFormat", param=param)
+    def setMovieFileFormat(self, params=None):
+        return self._cmd(method="setMovieFileFormat", params=params)
 
-    def setMovieQuality(self, param=None):
-        return self._cmd(method="setMovieQuality", param=param)
+    def setMovieQuality(self, params=None):
+        return self._cmd(method="setMovieQuality", params=params)
 
-    def setSteadyMode(self, param=None):
-        return self._cmd(method="setSteadyMode", param=param)
+    def setSteadyMode(self, params=None):
+        return self._cmd(method="setSteadyMode", params=params)
 
-    def setViewAngle(self, param=None):
-        return self._cmd(method="setViewAngle", param=param)
+    def setViewAngle(self, params=None):
+        return self._cmd(method="setViewAngle", params=params)
 
-    def setSceneSelection(self, param=None):
-        return self._cmd(method="setSceneSelection", param=param)
+    def setSceneSelection(self, params=None):
+        return self._cmd(method="setSceneSelection", params=params)
 
-    def setColorSetting(self, param=None):
-        return self._cmd(method="setColorSetting", param=param)
+    def setColorSetting(self, params=None):
+        return self._cmd(method="setColorSetting", params=params)
 
-    def setIntervalTime(self, param=None):
-        return self._cmd(method="setIntervalTime", param=param)
+    def setIntervalTime(self, params=None):
+        return self._cmd(method="setIntervalTime", params=params)
 
-    def setLoopRecTime(self, param=None):
-        return self._cmd(method="setLoopRecTime", param=param)
+    def setLoopRecTime(self, params=None):
+        return self._cmd(method="setLoopRecTime", params=params)
 
-    def setFlipSetting(self, param=None):
-        return self._cmd(method="setFlipSetting", param=param)
+    def setFlipSetting(self, params=None):
+        return self._cmd(method="setFlipSetting", params=params)
 
-    def setTvColorSystem(self, param=None):
-        return self._cmd(method="setTvColorSystem", param=param)
+    def setTvColorSystem(self, params=None):
+        return self._cmd(method="setTvColorSystem", params=params)
 
     def startRecMode(self):
         return self._cmd(method="startRecMode")
@@ -500,44 +689,44 @@ class SonyAPI():
     def getAvailableWindNoiseReduction(self):
         return self._cmd(method="getAvailableWindNoiseReduction")
 
-    def setCameraFunction(self, param=None):
-        return self._cmd(method="setCameraFunction", param=param)
+    def setCameraFunction(self, params=None):
+        return self._cmd(method="setCameraFunction", params=params)
 
-    def setAudioRecording(self, param=None):
-        return self._cmd(method="setAudioRecording", param=param)
+    def setAudioRecording(self, params=None):
+        return self._cmd(method="setAudioRecording", params=params)
 
-    def setWindNoiseReduction(self, param=None):
-        return self._cmd(method="setWindNoiseReduction", param=param)
+    def setWindNoiseReduction(self, params=None):
+        return self._cmd(method="setWindNoiseReduction", params=params)
 
-    def getSourceList(self, param=None):
-        return self._cmd(method="getSourceList", param=param, target="avContent")
+    def getSourceList(self, params=None):
+        return self._cmd(method="getSourceList", params=params, target="avContent")
 
-    def getContentCount(self, param=None):
-        return self._cmd(method="getContentCount", param=param, target="avContent")
+    def getContentCount(self, params=None):
+        return self._cmd(method="getContentCount", params=params, target="avContent", version='1.2')
 
-    def getContentList(self, param=None):
-        return self._cmd(method="getContentList", param=param, target="avContent")
+    def getContentList(self, params=None):
+        return self._cmd(method="getContentList", params=params, target="avContent", version='1.3')
 
-    def setStreamingContent(self, param=None):
-        return self._cmd(method="setStreamingContent", param=param, target="avContent")
+    def setStreamingContent(self, params=None):
+        return self._cmd(method="setStreamingContent", params=params, target="avContent")
 
-    def seekStreamingPosition(self, param=None):
-        return self._cmd(method="seekStreamingPosition", param=param, target="avContent")
+    def seekStreamingPosition(self, params=None):
+        return self._cmd(method="seekStreamingPosition", params=params, target="avContent")
 
-    def requestToNotifyStreamingStatus(self, param=None):
-        return self._cmd(method="requestToNotifyStreamingStatus", param=param, target="avContent")
+    def requestToNotifyStreamingStatus(self, params=None):
+        return self._cmd(method="requestToNotifyStreamingStatus", params=params, target="avContent")
 
-    def deleteContent(self, param=None):
-        return self._cmd(method="deleteContent", param=param, target="avContent")
+    def deleteContent(self, params=None):
+        return self._cmd(method="deleteContent", params=params, target="avContent", version='1.1')
 
-    def setInfraredRemoteControl(self, param=None):
-        return self._cmd(method="setInfraredRemoteControl", param=param)
+    def setInfraredRemoteControl(self, params=None):
+        return self._cmd(method="setInfraredRemoteControl", params=params)
 
-    def getEvent(self, param=None):
-        return self._cmd(method="getEvent", param=param)
+    def getEvent(self, params=None):
+        return self._cmd(method="getEvent", params=params)
 
-    def getMethodTypes(self, param=None, target=None): # camera, system and avContent
-        return self._cmd(method="getMethodTypes", param=param, target=None)
+    def getMethodTypes(self, params=None, target=None):  # camera, system and avContent
+        return self._cmd(method="getMethodTypes", params=params)
 
     def getShootMode(self):
         return self._cmd(method="getShootMode")
@@ -910,5 +1099,3 @@ class SonyAPI():
 
     def getVersions(self, target=None):
         return self._cmd(method="getVersions", target=target)
-
-
