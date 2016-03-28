@@ -3,13 +3,15 @@ import urllib
 import urllib2
 import time
 import socket
+import re
 
 SSDP_ADDR = "239.255.255.250"  # The remote host
-SSDP_PORT = 1900    # The same port as used by the server
+SSDP_PORT = 1900  # The same port as used by the server
 SSDP_MX = 1
 SSDP_ST = "urn:schemas-sony-com:service:ScalarWebAPI:1"
-SSDP_TIMEOUT = 10000  #msec
+SSDP_TIMEOUT = 10000  # msec
 PACKET_BUFFER_SIZE = 1024
+
 
 class ControlPoint(object):
     def __init__(self):
@@ -20,9 +22,13 @@ class ControlPoint(object):
         self.__udp_socket.settimeout(1)
         return
 
-    def discover(self, duration):
+    def discover(self, duration=None):
+        # Default timeout of 1s
+        if duration == None:
+            duration = 1
+
         # Set the socket to broadcast mode.
-        self.__udp_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL , 2)
+        self.__udp_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
 
         msg = '\r\n'.join(["M-SEARCH * HTTP/1.1",
                            "HOST: 239.255.255.250:1900",
@@ -49,6 +55,44 @@ class ControlPoint(object):
             except:
                 pass
         return packets
+
+    def _parse_device_definition(self, doc):
+        """
+        Parse the XML device definition file.
+        """
+        dd_regex = ("<av:X_ScalarWebAPI_Service>"
+                    "\s*"
+                    "<av:X_ScalarWebAPI_ServiceType>"
+                    "(.+?)"
+                    "</av:X_ScalarWebAPI_ServiceType>"
+                    "\s*"
+                    "<av:X_ScalarWebAPI_ActionList_URL>"
+                    "(.+?)"
+                    "/sony"  # and also strip "/sony"
+                    "</av:X_ScalarWebAPI_ActionList_URL>"
+                    "\s*"
+                    "<av:X_ScalarWebAPI_AccessType\s*/>"  # Note: QX10 has "Type />", HX60 has "Type/>"
+                    "\s*"
+                    "</av:X_ScalarWebAPI_Service>")
+
+        services = {}
+        print doc
+        for m in re.findall(dd_regex, doc):
+            service_name = m[0]
+            endpoint = m[1]
+            services[service_name] = endpoint
+        return services
+
+    def _read_device_definition(self, url):
+        """
+        Fetch and parse the device definition, and extract the URL endpoint for
+        the camera API service.
+        """
+        r = urllib2.urlopen(url)
+        services = self._parse_device_definition(r.read())
+
+        return services['camera']
+
 
 # Common Header
 # 0--------1--------2--------+--------4----+----+----+----8
@@ -77,30 +121,34 @@ class ControlPoint(object):
 # | Padding data size ...                                 |
 # ------------------------------JPEG data size + Padding data size
 
+
+
 import binascii
+
 
 def common_header(bytes):
     start_byte = int(binascii.hexlify(bytes[0]), 16)
     payload_type = int(binascii.hexlify(bytes[1]), 16)
     sequence_number = int(binascii.hexlify(bytes[2:4]), 16)
     time_stemp = int(binascii.hexlify(bytes[4:8]), 16)
-    if start_byte != 255: # 0xff fixed
+    if start_byte != 255:  # 0xff fixed
         return '[error] wrong QX livestream start byte'
-    if payload_type != 1: # 0x01 - liveview images
+    if payload_type != 1:  # 0x01 - liveview images
         return '[error] wrong QX livestream payload type'
     common_header = {'start_byte': start_byte,
-                    'payload_type': payload_type,
-                    'sequence_number': sequence_number,
-                    'time_stemp': time_stemp, #milliseconds
-                    }
+                     'payload_type': payload_type,
+                     'sequence_number': sequence_number,
+                     'time_stemp': time_stemp,  # milliseconds
+                     }
     return common_header
+
 
 def payload_header(bytes):
     start_code = int(binascii.hexlify(bytes[0:4]), 16)
     jpeg_data_size = int(binascii.hexlify(bytes[4:7]), 16)
     padding_size = int(binascii.hexlify(bytes[7]), 16)
     reserved_1 = int(binascii.hexlify(bytes[8:12]), 16)
-    flag = int(binascii.hexlify(bytes[12]), 16) # 0x00, fixed
+    flag = int(binascii.hexlify(bytes[12]), 16)  # 0x00, fixed
     reserved_2 = int(binascii.hexlify(bytes[13:]), 16)
     if flag != 0:
         return '[error] wrong QX payload header flag'
@@ -112,8 +160,8 @@ def payload_header(bytes):
                       'padding_size': padding_size,
                       'reserved_1': reserved_1,
                       'flag': flag,
-                      'resreved_2':reserved_2,
-                    }
+                      'resreved_2': reserved_2,
+                      }
     return payload_header
 
 
@@ -181,22 +229,21 @@ class SonyAPI():
         except Exception as e:
             result = "[ERROR] camera doesn't work : " + str(e)
 
-        time.sleep(1)
+        # time.sleep(1)
         return result
-
 
     # <editor-fold desc="Listing Data">
     def getDates(self):
-        #Gets Folders dates without changing current Camera Function.
+        # Gets Folders dates without changing current Camera Function.
 
-        #Change mode to Contents Transfer if needed
-        reChange=False
-        camFunction=self.getCameraFunction()['result'][0]
-        if not camFunction=='Contents Transfer':
-            reChange=True
+        # Change mode to Contents Transfer if needed
+        reChange = False
+        camFunction = self.getCameraFunction()['result'][0]
+        if not camFunction == 'Contents Transfer':
+            reChange = True
             self.setCameraFunction(params='Contents Transfer')
 
-        #Recover dates
+        # Recover dates
         paramsList = {'uri': self.source,
                       'stIdx': 0,
                       'cnt': 100,
@@ -205,134 +252,141 @@ class SonyAPI():
                       'sort': 'ascending'}
         contList = self.getContentList(paramsList)['result'][0]
         dateList = [elt['title'] for elt in contList]
-        #dateUriList = [elt['uri'] for elt in contList]
+        # dateUriList = [elt['uri'] for elt in contList]
 
-        #Change to previous Camera Function
+        # Change to previous Camera Function
         if reChange:
             self.setCameraFunction(camFunction)
 
         return dateList
 
-    def getFilesCount(self,date=None,type=None):
-        #Initialize variables
-        recType=None
-        view='flat'
+    def getFilesCount(self, date=None, type=None):
+        # Initialize variables
+        recType = None
+        view = 'flat'
 
-        #Change mode to Contents Transfer if needed
-        camFunction=self.getCameraFunction()['result'][0]
-        if not camFunction=='Contents Transfer':
-            reChange=True
+        # Change mode to Contents Transfer if needed
+        camFunction = self.getCameraFunction()['result'][0]
+        if not camFunction == 'Contents Transfer':
+            reChange = True
             self.setCameraFunction(params='Contents Transfer')
 
+        uri = self.source
 
-        uri=self.source
+        # Type needs to be a list
+        if type and isinstance(type, str):
+            type = [type]
 
-        #Type needs to be a list
-        if type and isinstance(type,str):
-            type=[type]
-
-        #If date is specified, it is appended to the default uri (ie scheme + storage source), and view is switched
+        # If date is specified, it is appended to the default uri (ie scheme + storage source), and view is switched
         # to date
         if date:
-            date=date[0:4]+'-'+date[4:6]+'-'+date[6:8]
-            uri=uri + '?path=' + date
-            view='date'
+            date = date[0:4] + '-' + date[4:6] + '-' + date[6:8]
+            uri = uri + '?path=' + date
+            view = 'date'
 
         ##Type specification is possible only in date view. Thus if type is specified without a date, all the files
         # should be first listed, and then processed with python to count only the files with specified type. Specified type
         # is recorded in recType
         if not date and type:
-            recType=type
-            type=None
+            recType = type
+            type = None
 
         if not recType:
-            paramsList = {'uri':uri,
-                          'type':type,
-                          'view':view}
-            res=self.getContentCount(paramsList)['result'][0]['count']
+            paramsList = {'uri': uri,
+                          'type': type,
+                          'view': view}
+            res = self.getContentCount(paramsList)
+            try:
+                res = res['result'][0]['count']
+            except KeyError:
+                res = res['error']
+
 
         else:
-            paramsList = {'uri':uri,
-                      'stIdx':0,
-                      'cnt':100,
-                      'type':type,
-                      'view':view,
-                      'sort':'ascending'}
-            res=self.getContentList(paramsList)['result'][0]
-            res=[elt['contentKind'] for elt in res]
-            if len(res)>=100:
-                return "Error:Type chosen with no date, more than 100 files listed "
-                #Possible upgrade : list files until len(res)<100. Really useful?
-            else:
-                c=0
-                for elt in res:
-                    if elt in recType:
-                        c += 1
-                res=c
+            paramsList = {'uri': uri,
+                          'stIdx': 0,
+                          'cnt': 100,
+                          'type': type,
+                          'view': view,
+                          'sort': 'ascending'}
+            res = self.getContentList(paramsList)
+            try:
+                res = res['result'][0]
+                res = [elt['contentKind'] for elt in res]
+                if len(res) >= 100:
+                    return "Error:Type chosen with no date, more than 100 files listed "
+                    # Possible upgrade : list files until len(res)<100. Really useful?
+                else:
+                    c = 0
+                    for elt in res:
+                        if elt in recType:
+                            c += 1
+                        res = c
+            except KeyError:
+                res = res['error']
 
         return res
 
-    def getFilesList(self,date=None,type=None,stIdx=0,cnt=100,sort='ascending'):
+    def getFilesList(self, date=None, type=None, stIdx=0, cnt=100, sort='ascending'):
 
-        #Initialize variables
-        recType=None
-        view='flat'
+        # Initialize variables
+        recType = None
+        view = 'flat'
 
-        #Change mode to Contents Transfer if needed
-        reChange=False
-        camFunction=self.getCameraFunction()['result'][0]
-        if not camFunction=='Contents Transfer':
-            reChange=True
+        # Change mode to Contents Transfer if needed
+        reChange = False
+        camFunction = self.getCameraFunction()['result'][0]
+        if not camFunction == 'Contents Transfer':
+            reChange = True
             self.setCameraFunction(params='Contents Transfer')
 
+        uri = self.source
 
-        uri=self.source
+        # Type needs to be a list
+        if type and isinstance(type, str):
+            type = [type]
 
-        #Type needs to be a list
-        if type and isinstance(type,str):
-            type=[type]
-
-        #If date is specified, it is appended to the default uri (ie scheme + storage source), and view is switched
+        # If date is specified, it is appended to the default uri (ie scheme + storage source), and view is switched
         # to date
         if date:
-            date=date[0:4]+'-'+date[4:6]+'-'+date[6:8]
-            uri=uri + '?path=' + date
-            view='date'
+            date = date[0:4] + '-' + date[4:6] + '-' + date[6:8]
+            uri = uri + '?path=' + date
+            view = 'date'
 
         ##Type specification is possible only in date view. Thus if type is specified without a date, all the files
         # should be first listed, and then processed with python to keep only the type specified. Specified type
         # is recorded in recType
         if not date and type:
-            recType=type
-            type=None
+            recType = type
+            type = None
 
-        paramsList = {'uri':uri,
-                      'stIdx':stIdx,
-                      'cnt':cnt,
-                      'type':type,
-                      'view':view,
-                      'sort':sort}
-        #print(paramsList)
+        paramsList = {'uri': uri,
+                      'stIdx': stIdx,
+                      'cnt': cnt,
+                      'type': type,
+                      'view': view,
+                      'sort': sort}
+        # print(paramsList)
 
-        res=self.getContentList(paramsList)
+        res = self.getContentList(paramsList)
 
         try:
-            #print self.getContentList(paramsList)
-            res=res['result'][0]
+            # print self.getContentList(paramsList)
+            res = res['result'][0]
 
-            #if recType has been specified, keep only files matching type initially given
+            # if recType has been specified, keep only files matching type initially given
             if recType:
-                res=[elt for elt in res if elt['contentKind'] in recType]
+                res = [elt for elt in res if elt['contentKind'] in recType]
 
-        except KeyError :
+        except KeyError:
             print "Error : Cannot obtain content list. Supposedly there's no file matching specified type. Returns empty" \
                   " list "
-            res=[]
+            res = []
 
         finally:
             return res
 
-    def getFilesInRange(self,date,timeBegin,timeEnd,folder,type=None):
+    def getFilesInRange(self, date, timeBegin, timeEnd, type=None):
         """List the files recorded during a specified range of time during a specified day.
 
         date -- string, Date of the recording : YearMonthDay (ex '20160513')
@@ -343,86 +397,88 @@ class SonyAPI():
             (ex  ['still','movie_mp4'])
         """
 
-        #Defaul setting for files type
-        #if not type:
-        #    type=['still']
+        # Defaul setting for files type
+        if not type:
+            type = ['still']
 
-        #Variables
-        filesList=[]
-        FirstCreatedTime=date[0:4]+'-'+date[4:6]+'-'+date[6:8]+'T'+timeBegin
-        LastCreatedTime=date[0:4]+'-'+date[4:6]+'-'+date[6:8]+'T'+timeEnd
-        firstFileFound=False
-        lastFileFound=False
-        numFiles=self.getFilesCount(date,type)
-        indSearch=0
-        indFirstFile=numFiles-1 #By default (if all files begin gefore timeBegin) pick the last file
-        indLastFile=numFiles-1
+        # Variables
+        filesList = []
+        FirstCreatedTime = date[0:4] + '-' + date[4:6] + '-' + date[6:8] + 'T' + timeBegin
+        LastCreatedTime = date[0:4] + '-' + date[4:6] + '-' + date[6:8] + 'T' + timeEnd
+        firstFileFound = False
+        lastFileFound = False
+        numFiles = self.getFilesCount(date, type)
+        indSearch = 0
+        indFirstFile = numFiles - 1  # By default (if all files begin before timeBegin) pick the last file
+        indLastFile = numFiles - 1
 
-        while not firstFileFound and indSearch<numFiles :
-            files=self.getFilesList(date,type,stIdx=indSearch)
-            times=[elt['createdTime'] for elt in files]
-            for i,time in enumerate(times):
-                #If created time is after timeBegin, take file just before
-                if time[0:19]>=FirstCreatedTime:
-                    if indSearch == 0 and i==0:
-                        indFirstFile=0
+        while not firstFileFound and indSearch < numFiles:
+            files = self.getFilesList(date, type, stIdx=indSearch)
+            times = [elt['createdTime'] for elt in files]
+            for i, time in enumerate(times):
+                # If created time is after timeBegin, take file just before
+                if time[0:19] >= FirstCreatedTime:
+                    if indSearch == 0 and i == 0:
+                        indFirstFile = 0
                         print("On " + date + ", first file was created after timeBegin")
                     else:
-                        indFirstFile=indSearch+i-1
-                    firstFileFound=True
+                        indFirstFile = indSearch + i - 1
+                    firstFileFound = True
                     break
             indSearch += 100
 
-        #If all files begin before timeBegin, the last one only is picked (cf indFirstFile=numFiles-1)
-        #indSearch is set indFirstFile to begin listing the data
-        indSearch=indFirstFile
+        # If all files begin before timeBegin, the last one only is picked (cf indFirstFile=numFiles-1)
+        # indSearch is set indFirstFile to begin listing the data
+        indSearch = indFirstFile
 
-        while not lastFileFound and indSearch<numFiles:
-            files=self.getFilesList(date,type,stIdx=indSearch)
-            times=[elt['createdTime'] for elt in files]
-            for i,time in enumerate(times):
-                if time[0,19]>LastCreatedTime:
-                    indLastFile=indSearch+i-1
-                    lastFileFound=True
+        while not lastFileFound and indSearch < numFiles:
+            files = self.getFilesList(date, type, stIdx=indSearch)
+            times = [elt['createdTime'] for elt in files]
+            for i, time in enumerate(times):
+                if time[0:19] > LastCreatedTime:
+                    indLastFile = indSearch + i - 1
+                    lastFileFound = True
                     break
                 else:
                     filesList.append(files[i])
             indSearch += 100
 
-        filesListLength=indLastFile-indFirstFile+1
+        filesListLength = indLastFile - indFirstFile + 1
 
-        return filesList,filesListLength
+        return filesList, filesListLength
 
-    def getFilesOriginalUrl(self,date=None,stIdx=0,cnt=100,type=None,sort='ascending'):
-        contList=self.getFilesList(date,stIdx,cnt,type,sort)
-        #print contList
-        Urls=[elt['content']['original'][0]['url'] for elt in contList]
+    def getFilesOriginalUrl(self, date=None, stIdx=0, cnt=100, type=None, sort='ascending'):
+        contList = self.getFilesList(date, stIdx, cnt, type, sort)
+        # print contList
+        Urls = [elt['content']['original'][0]['url'] for elt in contList]
         return Urls
 
-    def getJpgList(self,date=None,stIdx=0,cnt=100,sort='ascending'):
-        return self.getFilesList(date=date,stIdx=stIdx,cnt=cnt,type=['still'],sort=sort)
+    def getJpgList(self, date=None, stIdx=0, cnt=100, sort='ascending'):
+        return self.getFilesList(date=date, stIdx=stIdx, cnt=cnt, type=['still'], sort=sort)
+
     # </editor-fold>
 
     # <editor-fold desc="Download Data">
 
-    def saveFile(self,url,folder,name=None):
-        url=url.translate(None,'\\')
+    def saveFile(self, url, folder, name=None):
+        url = url.translate(None, '\\')
 
-        #If no name given, the file is named after the url address
+        # If no name given, the file is named after the url address
         if not name:
-            name=url.split('/org/')[1]
+            name = url.split('/org/')[1]
 
-        path=folder+'/'+name
-        u=urllib2.urlopen(url)
+        path = folder + '/' + name
+        u = urllib2.urlopen(url)
         f = open(path, 'wb')
         buffer = u.read()
         f.write(buffer)
         f.close()
 
     #
-    def saveRange(self,date,timeBegin,timeEnd,folder,type=None):
-        """Downloads the files recorded during a specified range of time during a specified day. Files will have format
-            YearMonthDay_HourMinSec_N, where N differentiates files with similar created time (ex 20160324_143652_2)
+    def saveFilesInRange(self, date, timeBegin, timeEnd, folder, type=None):
+        """Downloads the files recorded during a specified range of time during a specified day. Files names will be
+            "CreatedTime_N (ISO8601, ex "2014-08-18T12:34:56+09:00"), where N differentiates files with similar created time
+            (ex 2014-08-18T12:34:56+09:00_2)
 
         date -- string, Date of the recording : YearMonthDay (ex '20160513')
         timeBegin -- string, time of initial created time : Hour:Min:Sec (ex '10:34:23')
@@ -432,44 +488,27 @@ class SonyAPI():
             (ex  ['still','movie_mp4'])
         """
 
-        #Defaul setting for files type
+        # Default setting for files type
         if not type:
-            type=['still']
+            type = ['still']
 
-        #Variables
-        files=None
-        FirstCreatedTime=date[0:4]+'-'+date[4:6]+'-'+date[6:8]+'T'+timeBegin
-        LastCreatedTime=date[0:4]+'-'+date[4:6]+'-'+date[6:8]+'T'+timeEnd
-        firstFileFound=False
-        lastFileFound=False
-        numFiles=self.getFilesCount(date,type)
-        indSearch=0
-        indFirstFile=numFiles-1 #By default, pick the last file
-        indLastFile=0
+        filesList, numFiles = self.getFilesInRange(date, timeBegin, timeEnd, type=type)
 
-        while not firstFileFound and indSearch<numFiles :
-            files=self.getFilesList(date,type,stIdx=indSearch)
-            times=[elt['createdTime'] for elt in files]
-            for i,time in enumerate(times):
-                #If created time is after timeBegin, take file just before
-                if time[0:19]>=FirstCreatedTime:
-                    if indSearch == 0 and i==0:
-                        indFirstFile=0
-                        print("On " + date + ", first file was created after timeBegin")
-                    else:
-                        indFirstFile=indSearch+i-1
-                    firstFileFound=True
-                    break
-            indSearch += 100
+        urls = [elt['content']['original'][0]['url'] for elt in filesList]
+        times = [elt['createdTime'] for elt in filesList]
+        N = 0
+        prevTime = "-1"
 
-        #If all files begin before timeBegin, the last one is picked (cf indFirstFile=numFiles-1) and indSearch is set
-        #to the end of the files list
-        indSearch=min(indSearch,numFiles-1)
+        for i, url in enumerate(urls):
+            time = times[i]
+            if time == prevTime:
+                N += 1
+            else:
+                N = 0
+            prevTime = time
+            name=time + '_' + str(N)
+            self.saveFile(url,folder,name)
 
-        while not lastFileFound and indSearch<numFiles:
-            "test"
-
-        return
     # </editor-fold>
 
     # <editor-fold desc="Liveview">
@@ -480,7 +519,7 @@ class SonyAPI():
             liveview = self._cmd(method="startLiveviewWithSize", params=params)
         if isinstance(liveview, dict):
             try:
-                url = liveview['result'][0].replace('\\','')
+                url = liveview['result'][0].replace('\\', '')
                 result = urllib2.urlopen(url)
             except:
                 result = "[ERROR] liveview is dict type but there are no result: " + str(liveview['result'])
