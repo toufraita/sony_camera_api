@@ -5,7 +5,7 @@ import fnmatch
 print "Searching for camera"
 
 search = pysony.ControlPoint()
-cameras =  search.discover()
+cameras =  search.discover(duration=3)
 
 if len(cameras):
     camera = pysony.SonyAPI(QX_ADDR=cameras[0])
