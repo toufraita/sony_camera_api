@@ -5,6 +5,7 @@ import time
 import socket
 import re
 
+
 SSDP_ADDR = "239.255.255.250"  # The remote host
 SSDP_PORT = 1900  # The same port as used by the server
 SSDP_MX = 1
@@ -28,7 +29,8 @@ class ControlPoint(object):
             duration=1
 
         # Set the socket to broadcast mode.
-        self.__udp_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL , 2)
+        print ('broadcast')
+        print self.__udp_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL , 2)
 
         msg = '\r\n'.join(["M-SEARCH * HTTP/1.1",
                            "HOST: 239.255.255.250:1900",
@@ -40,7 +42,8 @@ class ControlPoint(object):
                            ""])
 
         # Send the message.
-        self.__udp_socket.sendto(msg, (SSDP_ADDR, SSDP_PORT))
+        print ('message')
+        print self.__udp_socket.sendto(msg, (SSDP_ADDR, SSDP_PORT))
 
         # Get the responses.
         packets = self._listen_for_discover(duration)
@@ -433,7 +436,8 @@ class SonyAPI():
             (ex  ['still','movie_mp4'])
         """
 
-        # Defaul setting for files type
+        # Default setting for files type
+
         if not type:
             type = ['still']
 
@@ -448,12 +452,19 @@ class SonyAPI():
         indFirstFile = numFiles - 1  # By default (if all files begin before timeBegin) pick the last file
         indLastFile = numFiles - 1
 
+        td=time.time()
+
         while not firstFileFound and indSearch < numFiles:
+
+            #Follow time
+            #d=time.time()-td
+            #print d
+
             files = self.getFilesList(date, type, stIdx=indSearch)
             times = [elt['createdTime'] for elt in files]
-            for i, time in enumerate(times):
+            for i, t in enumerate(times):
                 # If created time is after timeBegin, take file just before
-                if time[0:19] >= FirstCreatedTime:
+                if t[0:19] >= FirstCreatedTime:
                     if indSearch == 0 and i == 0:
                         indFirstFile = 0
                         print("On " + date + ", first file was created after timeBegin")
@@ -466,12 +477,18 @@ class SonyAPI():
         # If all files begin before timeBegin, the last one only is picked (cf indFirstFile=numFiles-1)
         # indSearch is set indFirstFile to begin listing the data
         indSearch = indFirstFile
+        print "First file found"
 
         while not lastFileFound and indSearch < numFiles:
+
+            #Follow time
+            # d=time.time()-td
+            # print d
+
             files = self.getFilesList(date, type, stIdx=indSearch)
             times = [elt['createdTime'] for elt in files]
-            for i, time in enumerate(times):
-                if time[0:19] > LastCreatedTime:
+            for i, t in enumerate(times):
+                if t[0:19] > LastCreatedTime:
                     indLastFile = indSearch + i - 1
                     lastFileFound = True
                     break
