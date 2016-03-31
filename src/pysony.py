@@ -275,13 +275,6 @@ class SonyAPI():
     def getDates(self):
         # Gets Folders dates without changing current Camera Function.
 
-        # Change mode to Contents Transfer if needed
-        reChange = False
-        camFunction = self.getCameraFunction()['result'][0]
-        if not camFunction == 'Contents Transfer':
-            reChange = True
-            self.setCameraFunction(params='Contents Transfer')
-
         # Recover dates
         paramsList = {'uri': self.source,
                       'stIdx': 0,
@@ -303,14 +296,6 @@ class SonyAPI():
         # Initialize variables
         recType = None
         view = 'flat'
-
-        # Change mode to Contents Transfer if needed
-        camFunction = self.getCameraFunction()['result'][0]
-        if not camFunction == 'Contents Transfer':
-            reChange = True
-            self.setCameraFunction(params='Contents Transfer')
-
-        uri = self.source
 
         # Type needs to be a list
         if type and isinstance(type, str):
@@ -372,13 +357,6 @@ class SonyAPI():
         recType = None
         view = 'flat'
 
-        # Change mode to Contents Transfer if needed
-        reChange = False
-        camFunction = self.getCameraFunction()['result'][0]
-        if not camFunction == 'Contents Transfer':
-            reChange = True
-            self.setCameraFunction(params='Contents Transfer')
-
         uri = self.source
 
         # Type needs to be a list
@@ -436,11 +414,6 @@ class SonyAPI():
             (ex  ['still','movie_mp4'])
         """
 
-        # Default setting for files type
-
-        if not type:
-            type = ['still']
-
         # Variables
         filesList = []
         FirstCreatedTime = date[0:4] + '-' + date[4:6] + '-' + date[6:8] + 'T' + timeBegin
@@ -455,10 +428,6 @@ class SonyAPI():
         td=time.time()
 
         while not firstFileFound and indSearch < numFiles:
-
-            #Follow time
-            #d=time.time()-td
-            #print d
 
             files = self.getFilesList(date, type, stIdx=indSearch)
             times = [elt['createdTime'] for elt in files]
@@ -480,10 +449,6 @@ class SonyAPI():
         print "First file found"
 
         while not lastFileFound and indSearch < numFiles:
-
-            #Follow time
-            # d=time.time()-td
-            # print d
 
             files = self.getFilesList(date, type, stIdx=indSearch)
             times = [elt['createdTime'] for elt in files]
@@ -540,10 +505,6 @@ class SonyAPI():
         type -- String List, types of elements to be recorded among 'still', 'movie_mp4', 'movie_xavcs'
             (ex  ['still','movie_mp4'])
         """
-
-        # Default setting for files type
-        if not type:
-            type = ['still']
 
         filesList, numFiles = self.getFilesInRange(date, timeBegin, timeEnd, type=type)
 
