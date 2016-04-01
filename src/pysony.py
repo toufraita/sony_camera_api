@@ -286,16 +286,13 @@ class SonyAPI():
         dateList = [elt['title'] for elt in contList]
         # dateUriList = [elt['uri'] for elt in contList]
 
-        # Change to previous Camera Function
-        if reChange:
-            self.setCameraFunction(camFunction)
-
         return dateList
 
     def getFilesCount(self, date=None, type=None):
         # Initialize variables
         recType = None
         view = 'flat'
+        uri=self.source
 
         # Type needs to be a list
         if type and isinstance(type, str):
