@@ -17,7 +17,7 @@ def getIDsInRange(camera, date, time_begin=None, time_end=None):
     --------------------------------cste----------------------------|-hexa1--|-hexa2--|deci1|-cste-
     --------------------------------cste----------------------------|-----------ID----------|-cste-
 
-    with int(hexa1,16)=int(deci1), and hexa1, hexa2, deci1 indremented of 1 at each photo taken.
+    with int(hexa1,16)=int(deci1), and hexa1, hexa2, deci1 inremented of 1 at each photo taken.
 
     The format of urls is
 
@@ -47,16 +47,16 @@ def getIDsInRange(camera, date, time_begin=None, time_end=None):
     uri_init = first_file['uri']
 
     # Conversion in seconds
-    time_init = int(time_init[11:13]) * 3600 + int(time_init[14:16]) * 60 + int(time_init[17:19])
+    time_init = hmsToSec(time_init[11:19])
 
     # If no begin time is specified, take the time of first picture
     if not time_begin:
         time_begin = time_init
     # Otherwise convert in seconds
     else:
-        time_begin = int(time_begin[0:2]) * 3600 + int(time_begin[3:5]) * 60 + int(time_begin[6:8])
+        time_begin = hmsToSec(time_begin)
 
-    time_end = int(time_end[0:2]) * 3600 + int(time_end[3:5]) * 60 + int(time_end[6:8])
+    time_end = hmsToSec(time_end)
 
     duration_to_begin = time_begin - time_init
     duration_to_end = time_end - time_init
@@ -93,6 +93,7 @@ def getIDsInRange(camera, date, time_begin=None, time_end=None):
 
     return ID
 
+
 def getUrisInRange(camera,date,time_begin=None,time_end=None,
                    cst_part='image:content?contentId=index%3A%2F%2F1000%2F00000001-default%2F'):
     '''
@@ -110,6 +111,7 @@ def getUrisInRange(camera,date,time_begin=None,time_end=None,
 
     return uris
 
+
 def getUrlsInRange(camera,date,time_begin=None,time_end=None,
                    cst_part='http://192.168.122.1:8080/contentstransfer/orgjpeg/index%3A%2F%2F1000%2F00000001-default%2F'):
     '''
@@ -126,6 +128,79 @@ def getUrlsInRange(camera,date,time_begin=None,time_end=None,
     urls=[cst_part+ID for ID in IDs]
 
     return urls
+
+
+def deleteFilesInRange(camera,date,time_begin,time_end):
+    '''
+    Delete the photos taken within the specified range. It is assumed that photos (and photos only) are taken
+    continuously every second. Note that if getUrlsInRange provides wrong urls, it will not prevent the programme to
+    delete the files matching the correct urls
+    :param camera:
+    :param date:
+    :param time_begin:
+    :param time_end:
+    :return:
+    '''
+
+    uris=getUrisInRange(camera,date,time_begin,time_end)
+
+    num_uris=len(uriss)
+    cnt=num_uris//100
+    rest=num_uris%100
+
+    for i in range (0,cnt*100,100):
+        camera.deleteContent({'url':uris[i:i+100]})
+
+    cxh=cnt*100
+    camera.deleteContent({'url':uris[cxh,cxh+rest]})
+
+
+def saveFilesInRange(camera,date,time_begin,time_end,folder):
+    '''
+    Save the photos taken within the specified range. It is assumed that photos (and photos only) are taken
+    continuously every second.
+    :param camera:
+    :param date:
+    :param time_begin:
+    :param time_end:
+    :return:
+    '''
+    urls=getUrlsInRange(camera,date,time_begin,time_end)
+
+    #Get time to name the files
+    time_begin=hmsToSec(time_begin)
+    time_end=hmsToSec(time_end)
+    times=range(time_begin,time_end+1,1)
+    times=[secToHms(t) for t in times]
+
+    #Rename date
+    date=date[0:4]+'-'+date[4:6]+'-'+date[6:9]+'T'
+
+    #Saving
+    for url,time in zip(urls,times):
+        name=date+time
+        camera.saveFile(url,folder,name)
+
+
+def deleteFirstDay(camera):
+    dates=camera.getDates()
+    deleteFilesInRange(camera,dates[0])
+
+
+def secToHms(nb_sec):
+    '''
+    Converts sec in Hour:Min:Sec
+    :param nb_sec:
+    :return:
+    '''
+    q,s=divmod(nb_sec,60)
+    h,m=divmod(q,60)
+    return "%d:%d:%d" %(h,m,s)
+
+
+def hmsToSec(time):
+    res = int(time[0:2]) * 3600 + int(time[3:5]) * 60 + int(time[6:8])
+    return res
 
 if __name__ == "__main__":
     cam = pysony.SonyAPI()

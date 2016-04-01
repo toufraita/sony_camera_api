@@ -9,16 +9,11 @@ cam=pysony.SonyAPI()
 # time.sleep(6)
 
 print cam.getDates()
-print cam.getFilesCount('20160331')
-
-#deluri={'uri':['image:content?contentId=index%3A%2F%2F1000%2F00000001-default%2F00008466-0000394C_33894_1_1000',
-               # 'image:content?contentId=index%3A%2F%2F1000%2F00000001-default%2F00008467-0000394D_33895_1_1000']}
-
-# cam.deleteContent(deluri)
+print cam.getFilesCount('20160401')
 
 for i in range (0,1):
 
-    date='20160331'
+    date='20160401'
     stIdx=100*i
     cnt=100
     type=None
@@ -49,8 +44,11 @@ for i in range (0,1):
     for url in urls:
         print url
 
+imports=['http://192.168.122.1:8080/contentstransfer/orgjpeg/index%3A%2F%2F1000%2F00000001-default%2F0000847F-00000A12_33919_1_1000',
+         'http://192.168.122.1:8080/contentstransfer/orgjpeg/index%3A%2F%2F1000%2F00000001-default%2F00008480-00000A13_33920_1_1000',
+         'http://192.168.122.1:8080/contentstransfer/orgjpeg/index%3A%2F%2F1000%2F00000001-default%2F00008480&-00000A13_33920_1_1000',             'http://192.168.122.1:8080/contentstransfer/orgjpeg/index%3A%2F%2F1000%2F00000001-default%2F00008480-00000A13_33920_1_1000',
+         'http://192.168.122.1:8080/contentstransfer/orgjpeg/index%3A%2F%2F1000%2F00000001-default%2F00008481-00000A14_33921_1_1000']
 
 
 
-#file=cam.getFilesInRange('20160324','08:10:00','12:00:00')
 

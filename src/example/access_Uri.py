@@ -5,20 +5,16 @@ import time
 
 cam=pysony.SonyAPI()
 
-cam.setCameraFunction('Contents Transfer')
-time.sleep(6)
+# cam.setCameraFunction('Contents Transfer')
+# time.sleep(6)
 
-print cam.getDates()
-print cam.getFilesCount('20160331')
-
-#deluri={'uri':['image:content?contentId=index%3A%2F%2F1000%2F00000001-default%2F00008466-0000394C_33894_1_1000',
-               # 'image:content?contentId=index%3A%2F%2F1000%2F00000001-default%2F00008467-0000394D_33895_1_1000']}
-
-# cam.deleteContent(deluri)
+# print cam.getDates()
+# print cam.getFilesCount('20160401')
+print cam.getAvailableApiList()
 
 for i in range (0,1):
 
-    date='20160331'
+    date='20160401'
     stIdx=100*i
     cnt=100
     type=None
@@ -48,9 +44,14 @@ for i in range (0,1):
 
     for uri in uris:
         print uri
+#
+# deluri={'uri':['image:content?contentId=index%3A%2F%2F1000%2F00000001-default%2F0000847D-00000A10_33917_1_1000',
+#                'image:content?contentId=index%3A%2F%2F1000%2F00000001-default%2F0000847E-00000A11_33918_1_1000',
+#                'image:content?contentId=index%3A%2F%2F1000%2F00000001-default%2F000084RE-00000A11_33918_1_1000',
+#                'image:content?contentId=index%3A%2F%2F1000%2F00000001-default%2F0000847F-00000A12_33919_1_1000',
+#                'image:content?contentId=index%3A%2F%2F1000%2F00000001-default%2F00008480-00000A13_33920_1_1000']}
+#
+# cam.deleteContent(deluri)
 
 
-
-
-#file=cam.getFilesInRange('20160324','08:10:00','12:00:00')
 

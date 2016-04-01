@@ -249,7 +249,7 @@ class SonyAPI():
         false = False
         null = None
 
-        if not method in ["getAvailableApiList"] and target not in ["avContent"]:
+        if not method in ["getAvailableApiList"] and target in ["camera"]:
             camera_api_list = self.getAvailableApiList()["result"][0]
             if method not in camera_api_list:
                 return "[ERROR] this api is not available"
@@ -480,7 +480,7 @@ class SonyAPI():
 
         # If no name given, the file is named after the url address
         if not name:
-            name = url.split('/org/')[1]
+            name = url.split('default%F')[1]
 
         path = folder + '/' + name
         u = urllib2.urlopen(url)
