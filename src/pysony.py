@@ -1239,7 +1239,7 @@ class X1000V(SonyAPI):
         if not time_end :
             time_end = time_final
         else:
-            time_end = hmsToSec(time_final)
+            time_end = hmsToSec(time_end)
             if time_end > time_final:
                 time_end=time_final
 
