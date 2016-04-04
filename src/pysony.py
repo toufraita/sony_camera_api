@@ -5,7 +5,6 @@ import time
 import socket
 import re
 
-
 SSDP_ADDR = "239.255.255.250"  # The remote host
 SSDP_PORT = 1900  # The same port as used by the server
 SSDP_MX = 1
@@ -25,12 +24,12 @@ class ControlPoint(object):
 
     def discover(self, duration=None):
         # Default timeout of 1s
-        if duration==None:
-            duration=1
+        if duration == None:
+            duration = 1
 
         # Set the socket to broadcast mode.
         print ('broadcast')
-        print self.__udp_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL , 2)
+        print self.__udp_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
 
         msg = '\r\n'.join(["M-SEARCH * HTTP/1.1",
                            "HOST: 239.255.255.250:1900",
@@ -49,7 +48,7 @@ class ControlPoint(object):
         packets = self._listen_for_discover(duration)
         print packets
         endpoints = []
-        for host,addr,data in packets:
+        for host, addr, data in packets:
             resp = self._parse_ssdp_response(data)
             print resp
             try:
@@ -71,7 +70,7 @@ class ControlPoint(object):
                 for x in xrange(len(packets)):
                     ohost, oport, odata = packets[x]
                     if host == ohost and port == oport:
-                        packets.append((host, port, odata+data))
+                        packets.append((host, port, odata + data))
                         packets.pop(x)
                         found = True
 
@@ -99,19 +98,19 @@ class ControlPoint(object):
         Parse the XML device definition file.
         """
         dd_regex = ('<av:X_ScalarWebAPI_Service>'
-            '\s*'
-            '<av:X_ScalarWebAPI_ServiceType>'
-            '(.+?)'
-            '</av:X_ScalarWebAPI_ServiceType>'
-            '\s*'
-            '<av:X_ScalarWebAPI_ActionList_URL>'
-            '(.+?)'
-            '/sony'                               # and also strip '/sony'
-            '</av:X_ScalarWebAPI_ActionList_URL>'
-            '\s*'
-            '<av:X_ScalarWebAPI_AccessType\s*/>'  # Note: QX10 has 'Type />', HX60 has 'Type/>'
-            '\s*'
-            '</av:X_ScalarWebAPI_Service>')
+                    '\s*'
+                    '<av:X_ScalarWebAPI_ServiceType>'
+                    '(.+?)'
+                    '</av:X_ScalarWebAPI_ServiceType>'
+                    '\s*'
+                    '<av:X_ScalarWebAPI_ActionList_URL>'
+                    '(.+?)'
+                    '/sony'  # and also strip '/sony'
+                    '</av:X_ScalarWebAPI_ActionList_URL>'
+                    '\s*'
+                    '<av:X_ScalarWebAPI_AccessType\s*/>'  # Note: QX10 has 'Type />', HX60 has 'Type/>'
+                    '\s*'
+                    '</av:X_ScalarWebAPI_Service>')
 
         services = {}
         print doc
@@ -210,17 +209,18 @@ def secToHms(nb_sec):
     :param nb_sec:
     :return:
     '''
-    q,s=divmod(nb_sec,60)
-    h,m=divmod(q,60)
-    return "%d:%d:%d" %(h,m,s)
+    q, s = divmod(nb_sec, 60)
+    h, m = divmod(q, 60)
+    return "%d:%d:%d" % (h, m, s)
 
 
 def hmsToSec(time):
     res = int(time[0:2]) * 3600 + int(time[3:5]) * 60 + int(time[6:8])
     return res
 
+
 class SonyAPI():
-    def __init__(self, QX_ADDR='http://192.168.122.1:8080', scheme='storage', source='storage:memoryCard1'):
+    def __init__(self, QX_ADDR, scheme, source):
         """Creation of link to camera. Default parameters are written for Sony ActionCas
 
         :param QX_ADDR: String.
@@ -307,7 +307,7 @@ class SonyAPI():
         # Initialize variables
         recType = None
         view = 'flat'
-        uri=self.source
+        uri = self.source
 
         # Type needs to be a list
         if type and isinstance(type, str):
@@ -437,14 +437,13 @@ class SonyAPI():
         indFirstFile = numFiles - 1  # By default (if all files begin before timeBegin) pick the last file
         indLastFile = numFiles - 1
 
-        td=time.time()
+        td = time.time()
 
         while not firstFileFound and indSearch < numFiles:
 
             files = self.getFilesList(date, type, stIdx=indSearch)
             times = [elt['createdTime'] for elt in files]
             for i, t in enumerate(times):
-                # If created time is after timeBegin, take file just before
                 if t[0:19] >= FirstCreatedTime:
                     if indSearch == 0 and i == 0:
                         indFirstFile = 0
@@ -473,9 +472,9 @@ class SonyAPI():
                     filesList.append(files[i])
             indSearch += 100
 
-        filesListLength = indLastFile - indFirstFile + 1
+        # filesListLength = indLastFile - indFirstFile + 1
 
-        return filesList, filesListLength
+        return filesList
 
     def getFilesOriginalUrl(self, date=None, stIdx=0, cnt=100, type=None, sort='ascending'):
         contList = self.getFilesList(date, stIdx, cnt, type, sort)
@@ -518,22 +517,22 @@ class SonyAPI():
             (ex  ['still','movie_mp4'])
         """
 
-        filesList, numFiles = self.getFilesInRange(date, timeBegin, timeEnd, type=type)
+        filesList = self.getFilesInRange(date, timeBegin, timeEnd, type=type)
 
         urls = [elt['content']['original'][0]['url'] for elt in filesList]
         times = [elt['createdTime'] for elt in filesList]
         N = 0
-        prevTime = "-1"
+        prevTime = "-1"  # Records the time of the previous photo recorded
 
         for i, url in enumerate(urls):
             time = times[i]
-            if time == prevTime:
+            if time == prevTime:  # If times are identicals, add one to the counter.
                 N += 1
             else:
                 N = 0
             prevTime = time
-            name=time + '_' + str(N)
-            self.saveFile(url,folder,name)
+            name = time + '_' + str(N)
+            self.saveFile(url, folder, name)
 
     # </editor-fold>
 
@@ -580,15 +579,15 @@ class SonyAPI():
 
     # </editor-fold>
 
-    def changeToRemoteShooting(self,duration=5):
+    def changeToRemoteShooting(self, duration=5):
 
-        cam_function=self.getCameraFunction()['result'][0]
+        cam_function = self.getCameraFunction()['result'][0]
         if cam_function == 'Contents Transfer':
             self.setCameraFunction('Remote Shooting')
             time.sleep(duration)
 
-    def changeToContentsTransfer(self,duration=5):
-        cam_function=self.getCameraFunction()['result'][0]
+    def changeToContentsTransfer(self, duration=5):
+        cam_function = self.getCameraFunction()['result'][0]
         if cam_function == 'Remote Shooting':
             self.setCameraFunction('Contents Transfer')
             time.sleep(duration)
@@ -1180,9 +1179,14 @@ class SonyAPI():
 
 
 class X1000V(SonyAPI):
+    IP = 'http://192.168.122.1:8080'
+    scheme = 'storage'
+    source = 'storage:memoryCard1'
+    uri_cst_part = 'image:content?contentId=index%3A%2F%2F1000%2F00000001-default%2F'
+    url_cst_part = 'http://192.168.122.1:8080/contentstransfer/orgjpeg/index%3A%2F%2F1000%2F00000001-default%2F'
 
-    def __init__(self,QX_ADDR='http://192.168.122.1:8080', scheme='storage', source='storage:memoryCard1'):
-        SonyAPI.__init__(self,QX_ADDR,scheme,source)
+    def __init__(self, QX_ADDR=IP, scheme=scheme, source=source):
+        SonyAPI.__init__(self, QX_ADDR, scheme, source)
 
     def getIDsInRange(self, date, time_begin=None, time_end=None):
         '''Function used to give the IDs (end of the Uri and urls) of files in a specified range. It is assumed that
@@ -1220,9 +1224,12 @@ class X1000V(SonyAPI):
         # Created Time an uri of the first file on date specified
         time_init = first_file['createdTime']
         uri_init = first_file['uri']
+        # print('First picture of the day : \n '+time_init)
+        # print('First uri of the day : \n '+uri_init)
 
         # Conversion in seconds
         time_init = hmsToSec(time_init[11:19])
+        # print('Conversion in second of the first time : ' + str(time_init))
 
         # If no begin time is specified, take the time of first picture
         if not time_begin:
@@ -1268,10 +1275,9 @@ class X1000V(SonyAPI):
 
         return ID
 
-
-    def getUrisInRange(self,date,time_begin=None,time_end=None,
-                       cst_part='image:content?contentId=index%3A%2F%2F1000%2F00000001-default%2F'):
-        '''
+    def getUrisInRange(self, date, time_begin=None, time_end=None,
+                       cst_part=uri_cst_part):
+        """
         Returns the Uris of photos taken within specified range. It is assumed that photos (and photos only) are taken
         continuously every second
         :param date:
@@ -1279,15 +1285,14 @@ class X1000V(SonyAPI):
         :param time_end:
         :param cst_part:
         :return:
-        '''
-        IDs=self.getIDsInRange(date,time_begin,time_end)
-        uris=[cst_part+ID for ID in IDs]
+        """
+        IDs = self.getIDsInRange(date, time_begin, time_end)
+        uris = [cst_part + ID for ID in IDs]
 
         return uris
 
-
-    def getUrlsInRange(self,date,time_begin=None,time_end=None,
-                       cst_part='http://192.168.122.1:8080/contentstransfer/orgjpeg/index%3A%2F%2F1000%2F00000001-default%2F'):
+    def getUrlsInRange(self, date, time_begin=None, time_end=None,
+                       cst_part=url_cst_part):
         '''
         Returns the Urls of photos taken within specified range. It is assumed that photos (and photos only) are taken
         continuously every second
@@ -1297,13 +1302,12 @@ class X1000V(SonyAPI):
         :param cst_part:
         :return:
         '''
-        IDs=self.getIDsInRange(date,time_begin,time_end)
-        urls=[cst_part+ID for ID in IDs]
+        IDs = self.getIDsInRange(date, time_begin, time_end)
+        urls = [cst_part + ID for ID in IDs]
 
         return urls
 
-
-    def deleteFilesInRange(self,date,time_begin,time_end):
+    def deleteFilesInRange(self, date, time_begin, time_end):
         '''
         Delete the photos taken within the specified range. It is assumed that photos (and photos only) are taken
         continuously every second. Note that if getUrlsInRange provides wrong urls, it will not prevent the programme to
@@ -1314,20 +1318,19 @@ class X1000V(SonyAPI):
         :return:
         '''
 
-        uris=self.getUrisInRange(date,time_begin,time_end)
+        uris = self.getUrisInRange(date, time_begin, time_end)
 
-        num_uris=len(uriss)
-        cnt=num_uris//100
-        rest=num_uris%100
+        num_uris = len(uris)
+        cnt = num_uris // 100
+        rest = num_uris % 100
 
-        for i in range (0,cnt*100,100):
-            self.deleteContent({'url':uris[i:i+100]})
+        for i in range(0, cnt * 100, 100):
+            self.deleteContent({'url': uris[i:i + 100]})
 
-        cxh=cnt*100
-        self.deleteContent({'url':uris[cxh,cxh+rest]})
+        cxh = cnt * 100
+        self.deleteContent({'url': uris[cxh, cxh + rest]})
 
-
-    def saveFilesInRange(self,date,time_begin,time_end,folder):
+    def saveFilesInRange(self, date, time_begin, time_end, folder, type=None):
         '''
         Save the photos taken within the specified range. It is assumed that photos (and photos only) are taken
         continuously every second.
@@ -1336,24 +1339,22 @@ class X1000V(SonyAPI):
         :param time_end:
         :return:
         '''
-        urls=self.getUrlsInRange(date,time_begin,time_end)
+        urls = self.getUrlsInRange(date, time_begin, time_end)
 
-        #Get time to name the files
-        time_begin=hmsToSec(time_begin)
-        time_end=hmsToSec(time_end)
-        times=range(time_begin,time_end+1,1)
-        times=[secToHms(t) for t in times]
+        # Get time to name the files
+        time_begin = hmsToSec(time_begin)
+        time_end = hmsToSec(time_end)
+        times = range(time_begin, time_end + 1, 1)
+        times = [secToHms(t) for t in times]
 
-        #Rename date
-        date=date[0:4]+'-'+date[4:6]+'-'+date[6:9]+'T'
+        # Rename date
+        date = date[0:4] + '-' + date[4:6] + '-' + date[6:9] + 'T'
 
-        #Saving
-        for url,time in zip(urls,times):
-            name=date+time
-            self.saveFile(url,folder,name)
-
+        # Saving
+        for url, time in zip(urls, times):
+            name = date + time
+            self.saveFile(url, folder, name)
 
     def deleteFirstDay(self):
-        dates=self.getDates()
+        dates = self.getDates()
         self.deleteFilesInRange(dates[0])
-
