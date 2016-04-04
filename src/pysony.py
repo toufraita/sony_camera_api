@@ -1214,31 +1214,34 @@ class X1000V(SonyAPI):
         # first_file=camera.getFilesList(date=date,stIdx=0,cnt=1)['result'][0][0]
         first_file = self.getFilesList(date=date, stIdx=0, cnt=1)[0]
 
-        # If no end time is specified, take the time of the last picture
-        if not time_end:
-            num_files = self.getFilesCount(date=date)
-            last_file = self.getFilesList(date=date, stIdx=num_files - 1, cnt=1)[0]
-            time_end = last_file['createdTime'][11:19]
-
+        #Recovering last file of the day
+        num_files = self.getFilesCount(date=date)
+        last_file = self.getFilesList(date=date, stIdx=num_files - 1, cnt=1)[0]
 
         # Created Time an uri of the first file on date specified
+        time_final = last_file['createdTime']
         time_init = first_file['createdTime']
         uri_init = first_file['uri']
-        # print('First picture of the day : \n '+time_init)
-        # print('First uri of the day : \n '+uri_init)
 
         # Conversion in seconds
         time_init = hmsToSec(time_init[11:19])
-        # print('Conversion in second of the first time : ' + str(time_init))
+        time_final = hmsToSec(time_final[11:19])
 
-        # If no begin time is specified, take the time of first picture
-        if not time_begin:
+        # If no begin time is specified or begin time is before initial time, take the time of first picture
+        if not time_begin :
             time_begin = time_init
-        # Otherwise convert in seconds
         else:
             time_begin = hmsToSec(time_begin)
+            if time_begin < time_init:
+                time_begin=time_init
 
-        time_end = hmsToSec(time_end)
+         # If no end time is specified or end time is after final time, take the time of final picture
+        if not time_end :
+            time_end = time_final
+        else:
+            time_end = hmsToSec(time_final)
+            if time_end > time_final:
+                time_end=time_final
 
         duration_to_begin = time_begin - time_init
         duration_to_end = time_end - time_init
