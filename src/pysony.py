@@ -1310,7 +1310,7 @@ class X1000V(SonyAPI):
 
         return urls
 
-    def deleteFilesInRange(self, date, time_begin, time_end):
+    def deleteFilesInRange(self, date, time_begin=None, time_end=None):
         '''
         Delete the photos taken within the specified range. It is assumed that photos (and photos only) are taken
         continuously every second. Note that if getUrlsInRange provides wrong urls, it will not prevent the programme to
@@ -1328,12 +1328,12 @@ class X1000V(SonyAPI):
         rest = num_uris % 100
 
         for i in range(0, cnt * 100, 100):
-            self.deleteContent({'url': uris[i:i + 100]})
+            self.deleteContent({'uri': uris[i:i + 100]})
 
         cxh = cnt * 100
-        self.deleteContent({'url': uris[cxh, cxh + rest]})
+        self.deleteContent({'uri': uris[cxh:cxh + rest]})
 
-    def saveFilesInRange(self, date, time_begin, time_end, folder, type=None):
+    def saveFilesInRange(self,folder,date, time_begin=None, time_end=None, type=None):
         '''
         Save the photos taken within the specified range. It is assumed that photos (and photos only) are taken
         continuously every second.
