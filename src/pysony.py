@@ -4,6 +4,7 @@ import urllib2
 import time
 import socket
 import re
+import subprocess
 
 SSDP_ADDR = "239.255.255.250"  # The remote host
 SSDP_PORT = 1900  # The same port as used by the server
@@ -1184,11 +1185,59 @@ class X1000V(SonyAPI):
     source = 'storage:memoryCard1'
     uri_cst_part = 'image:content?contentId=index%3A%2F%2F1000%2F00000001-default%2F'
     url_cst_part = 'http://192.168.122.1:8080/contentstransfer/orgjpeg/index%3A%2F%2F1000%2F00000001-default%2F'
+    gps_folder = '/home/marc/merapi/camera/gps_folder'
+
 
     def __init__(self, QX_ADDR=IP, scheme=scheme, source=source):
         SonyAPI.__init__(self, QX_ADDR, scheme, source)
 
-    def getIDsInRange(self, date, time_begin=None, time_end=None):
+    def checkGPS(image):
+        """Checks the presence of GPS data in the exif of a picture, using ImageMagick.
+
+        :param image:Picture to be scanned
+        :return: GPS Date and time if any, otherwise 0
+        """
+        GPSDate = subprocess.check_output(['identify', '-format', '%[exif:GPSDateStamp', image])[0:-1]
+        GPSTime = subprocess.check_output(['identify', '-format', '%[exif:GPSTimeStamp', image])[0:-1]
+        if GPSDate is '':
+            GPSDate=0
+        if GPSTime is '':
+            GPSTime=0
+        return GPSDate,GPSTime
+    checkGPS = staticmethod(checkGPS)
+
+    def getInitialTimeAndUri(self, date):
+        """Returns the  GPS time (if any) or the camera time , and the uri of the first pictures taken on the
+        specified date.
+
+        :date:
+        :return:
+        """
+
+        #Recover data from first file
+        first_file=self.getFilesList(date,cnt=1)[0]
+        uri_init=first_file['uri']
+        url_init=first_file['content']['original'][0]['url']
+        time_camera=hmsToSec(first_file['createdTime'][11:19])
+
+        #Import file
+        self.saveFile(url_init,X1000V.gps_folder,date)
+        GPSDate,GPSTime=X1000V.checkGPS(X1000V.gps_folder+'/'+date)
+
+        if GPSTime!=0:
+            if GPSDate is 0:
+                print "Caution, no GPS recorded date"
+            GPSTime=GPSTime.split(', ')
+            time_init=int(GPSTime[0].split('/')[0])*3600
+            time_init += int(GPSTime[1].split('/')[0])*60
+            time_init += int(GPSTime[2].split('/')[0])/1000
+
+            return 'GPSTime',time_init, uri_init
+        else:
+            return 'CameraTime',time_camera, uri_init
+
+
+    def getIDsInRange(self, date, time_init=None, uri_init=None, time_begin=None, time_end=None):
         '''Function used to give the IDs (end of the Uri and urls) of files in a specified range. It is assumed that
         pictures (and only pictures) are taken every second. The format of uri for pictures is
 
@@ -1209,39 +1258,29 @@ class X1000V(SonyAPI):
         :param time_end:
         :return:
         '''
+        if not time_init and not uri_init:
+            type_time,time_init,uri_init=self.getInitialTimeAndUri(date)
 
-        # Recovering first file of the day
-        # first_file=camera.getFilesList(date=date,stIdx=0,cnt=1)['result'][0][0]
-        first_file = self.getFilesList(date=date, stIdx=0, cnt=1)[0]
-
-        #Recovering last file of the day
+        # Recovering last file of the day
         num_files = self.getFilesCount(date=date)
-        last_file = self.getFilesList(date=date, stIdx=num_files - 1, cnt=1)[0]
-
-        # Created Time an uri of the first file on date specified
-        time_final = last_file['createdTime']
-        time_init = first_file['createdTime']
-        uri_init = first_file['uri']
-
-        # Conversion in seconds
-        time_init = hmsToSec(time_init[11:19])
-        time_final = hmsToSec(time_final[11:19])
 
         # If no begin time is specified or begin time is before initial time, take the time of first picture
-        if not time_begin :
+        time_begin=time_init
+        if not time_begin:
             time_begin = time_init
         else:
             time_begin = hmsToSec(time_begin)
             if time_begin < time_init:
-                time_begin=time_init
+                time_begin = time_init
 
-         # If no end time is specified or end time is after final time, take the time of final picture
-        if not time_end :
+        # If no end time is specified or end time is after final time, take the time of final picture
+        time_final=time_init+num_files-1
+        if not time_end:
             time_end = time_final
         else:
             time_end = hmsToSec(time_end)
             if time_end > time_final:
-                time_end=time_final
+                time_end = time_final
 
         duration_to_begin = time_begin - time_init
         duration_to_end = time_end - time_init
@@ -1333,7 +1372,7 @@ class X1000V(SonyAPI):
         cxh = cnt * 100
         self.deleteContent({'uri': uris[cxh:cxh + rest]})
 
-    def saveFilesInRange(self,folder,date, time_begin=None, time_end=None, type=None):
+    def saveFilesInRange(self, folder, date, time_begin=None, time_end=None, type=None):
         '''
         Save the photos taken within the specified range. It is assumed that photos (and photos only) are taken
         continuously every second.
